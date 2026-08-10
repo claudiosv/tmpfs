@@ -1,0 +1,21 @@
+tests/test_system.py
+  s_2e0865a6dd81f7::t_9566cec7636a5e 304-306
+tests/test_cli.py
+  s_2e0865a6dd81f7::t_c8df6482ee5931 6,20-22,1022-1023
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "15fec59f33a1193f9cfa817523a58033321c38ae",
+  "prompts": {},
+  "sessions": {
+    "s_2e0865a6dd81f7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0de32ddb-8661-4a99-b801-2387a4714cd7",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Claudio Spiess <claudiosv@users.noreply.github.com>"
+    }
+  }
+}
