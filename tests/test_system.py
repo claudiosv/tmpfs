@@ -301,7 +301,9 @@ class TestUvToolExecutable:
 
 
 class TestLaunchAgent:
-    def test_write_launch_agent_creates_plist(self, tmp_path: Path) -> None:
+    def test_write_launch_agent_creates_plist(
+        self, fake_home: Path, tmp_path: Path
+    ) -> None:
         log_dir = tmp_path / "logs"
         path = system.write_launch_agent(Path("/usr/local/bin/tmpfs"), log_dir)
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 import shutil
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
-from typer.testing import CliRunner
 
 from tmpfs import cli, system
 from tmpfs.config import (
@@ -16,6 +16,9 @@ from tmpfs.config import (
     save_config,
 )
 from tmpfs.errors import LaunchAgentError
+
+if TYPE_CHECKING:
+    from typer.testing import CliRunner
 
 
 class FakeSystem:
@@ -1016,7 +1019,8 @@ class TestInstallUninstall:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         def _raise(name: str) -> Path:
-            raise LaunchAgentError("uv tool executable not found: /fake/bin/tmpfs")
+            msg = "uv tool executable not found: /fake/bin/tmpfs"
+            raise LaunchAgentError(msg)
 
         monkeypatch.setattr(system, "uv_tool_executable", _raise)
         result = runner.invoke(cli.app, ["install"])
