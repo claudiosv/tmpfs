@@ -258,7 +258,7 @@ def uv_tool_executable(name: str) -> Path:
         msg = f"failed to locate the uv tool bin directory: {result.stderr.strip()}"
         raise LaunchAgentError(msg)
 
-    path = (Path(result.stdout.strip()) / name)
+    path = Path(result.stdout.strip()) / name
     path = Path(os.path.normpath(path.absolute()))
     if not path.exists():
         msg = f"uv tool executable not found: {path}"
