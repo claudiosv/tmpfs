@@ -1,0 +1,357 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+# Default Configuration
+SIZE=100 # MB
+NAME="tmpfs"
+
+usage() {
+	echo "Usage: $(basename "$0") [options] [mount | umount | remount | check | orphan | link <files...>]" >&2
+	echo "       (default: mount)" >&2
+	echo "" >&2
+	echo "Options:" >&2
+	echo "  -s, --size <MB>     Set the RAM disk size in Megabytes (default: 10)" >&2
+	echo "  -n, --name <NAME>   Set the RAM disk volume name (default: tmpfs)" >&2
+}
+
+# sudo mount -t tmpfs -- -i /Users/user/tmp
+
+process_argv() {
+	case "${1:-mount}" in
+	"mount") cmd_mount ;;
+	"umount") cmd_umount ;;
+	"remount") cmd_remount ;;
+	"check") cmd_check ;;
+	"orphan") cmd_orphan ;;
+	"link")
+		shift
+		cmd_link "$@"
+		;;
+	*)
+		usage
+		exit 1
+		;;
+	esac
+}
+
+cmd_check() {
+	if is_mounted; then
+		# awk 'NR==2' grabs the second row (the actual data), and '$2' grabs the Total Size column
+		local real_size
+		real_size=$(df -h "$RAM_DISK" | awk 'NR==2 {print $2}')
+		echo "Mounted at $RAM_DISK (Requested: ${SIZE}MB, Actual: ${real_size}B)"
+		return 0
+	else
+		echo "Not mounted"
+		return 1
+	fi
+}
+
+cmd_mount() {
+	# We want to mount it to an arbitrary folder, not necessarily /Volumes/
+	# local mount_point="/tmp/$NAME"
+
+	# if mount | grep -q " on $RAM_DISK "; then
+	# 	echo "Already mounted at $RAM_DISK" >&2
+	# 	return 1
+	# fi
+	if is_mounted; then
+		# echo "Already mounted at $RAM_DISK" >&2
+		cmd_check
+		return 1
+	fi
+
+	# Create mount directory if it doesn't exist
+	mkdir -p "$RAM_DISK"
+
+	local sectors=$((SIZE * 2048))
+	local device
+
+	# Allocate the RAM block device
+	# device=$(hdiutil attach -nomount "ram://$sectors" | awk '{print $1}')
+	device=$(diskutil image attach --noMount "ram://$sectors" | awk '{print $1}')
+
+	if [[ -z "$device" ]]; then
+		echo "Error: Failed to allocate RAM disk." >&2
+		return 1
+	fi
+
+	# Format the raw device
+	newfs_hfs -v "$NAME" "$device" >/dev/null || {
+		echo "Error: Formatting failed" >&2
+		hdiutil detach "$device" -force >/dev/null
+		return 1
+	}
+
+	# Mount it with nobrowse (hide from Finder) and noatime (faster reads)
+	mount -t hfs -o nobrowse -o noatime "$device" "$RAM_DISK" || {
+		echo "Error: Mount failed" >&2
+		hdiutil detach "$device" -force >/dev/null
+		return 1
+	}
+
+	echo "Mounted $NAME (${SIZE}MB) at $RAM_DISK (Stealth Mode)"
+	# if is_mounted; then
+	# 	# echo "Already mounted at $RAM_DISK" >&2
+	# 	cmd_check
+	# 	return 1
+	# fi
+
+	# local sectors=$((SIZE * 1024 * 1024 / 512))
+	# local device
+
+	# device=$(diskutil image attach -nomount "ram://$sectors" | tr -d ' \n')
+
+	# if [[ -z "$device" ]]; then
+	# 	echo "Error: Failed to allocate RAM disk." >&2
+	# 	return 1
+	# fi
+
+	# # mount -o noatime -t hfs ${ramdisk_dev} ${mount_point}
+	# # mount -t hfs -o nobrowse "$dev" "$mount_point"
+
+	# # diskutil apfs create "$device" "$NAME" >/dev/null || {
+	# # 	echo "Error: formatting failed" >&2
+	# # 	diskutil image detach "$device" -force >/dev/null
+	# # 	return 1
+	# # }
+	# # Using HFS+ for RAM disks is faster and doesn't suffer from the minimum
+	# # size constraints that APFS requires (APFS fails on small ~10MB drives).
+	# diskutil erasevolume HFS+ "$NAME" "$device" >/dev/null || {
+	# 	echo "Error: Formatting failed" >&2
+	# 	hdiutil detach "$device" -force >/dev/null
+	# 	return 1
+	# }
+
+	# echo "Mounted $NAME (${SIZE}MB) at $RAM_DISK"
+}
+
+cmd_umount() {
+	if ! is_mounted; then
+		echo "Not mounted." >&2
+		return 1
+	fi
+
+	diskutil eject "$RAM_DISK" >/dev/null && echo "Unmounted and destroyed $RAM_DISK"
+}
+
+cmd_remount() {
+	if is_mounted; then
+		cmd_umount
+	fi
+	cmd_mount
+}
+
+cmd_orphan() {
+	hdiutil info | grep -E 'image-path\s+: ram://' -A14 | grep -E '^/dev/disk[0-9]+\s*$'
+	return 0
+}
+
+cmd_link() {
+	if [[ $# -eq 0 ]]; then
+		echo "Error: Please provide files to link." >&2
+		return 1
+	fi
+
+	if ! is_mounted; then
+		echo "Error: RAM disk not mounted. Run './mount.sh mount' first." >&2
+		return 1
+	fi
+
+	for raw_path in "$@"; do
+		# Strip trailing slash just in case it's a directory (e.g., folder/ -> folder)
+		local filepath="${raw_path%/}"
+
+		if [[ ! -e "$filepath" ]]; then
+			echo "Warning: '$filepath' does not exist."
+			continue
+		fi
+
+		if [[ -L "$filepath" ]]; then
+			echo "Skipping: '$filepath' is already a symlink."
+			continue
+		fi
+
+		local filename
+		filename=$(basename "$filepath")
+
+		# Ensure the move succeeds before creating the symlink to prevent data loss
+		if mv "$filepath" "$RAM_DISK/"; then
+			ln -sf "$RAM_DISK/$filename" "$filepath"
+			echo "Redirected: $filepath -> $RAM_DISK/$filename"
+		else
+			echo "Error: Failed to move '$filepath' to RAM disk." >&2
+		fi
+	done
+}
+
+is_mounted() {
+	mount | grep -q " on $RAM_DISK "
+}
+
+# --- Argument Parsing ---
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-s | --size)
+		if [[ -n "$2" && "$2" =~ ^[0-9]+$ ]]; then
+			SIZE="$2"
+			shift 2
+		else
+			echo "Error: --size requires a valid numeric argument (e.g., --size 50)." >&2
+			exit 1
+		fi
+		;;
+	-n | --name)
+		# Validate that the name is provided and doesn't start with a hyphen (catching missing args)
+		if [[ -n "$2" && ! "$2" =~ ^- ]]; then
+			NAME="$2"
+			shift 2
+		else
+			echo "Error: --name requires a valid string argument (e.g., --name CodexLogs)." >&2
+			exit 1
+		fi
+		;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	-*)
+		echo "Error: Unknown option '$1'" >&2
+		usage
+		exit 1
+		;;
+	*)
+		break # Stop parsing flags once we hit the command (mount, link, etc.)
+		;;
+	esac
+done
+
+# Now that the flags are parsed and NAME is finalized, define the absolute path
+RAM_DISK="/private/tmp/$NAME"
+
+# Pass any remaining arguments to the command router
+process_argv "$@"
+
+# #!/usr/bin/env bash
+
+# size=10 #24 # MB
+# mount_point=$HOME/tmpfs
+# name=$(basename "$mount_point")
+
+# usage() {
+# 	echo "usage: $(basename "$0") [mount | umount | remount | check | orphan]" \
+# 		"(default: mount)" >&2
+# }
+
+# process_argv() {
+# 	# [ $# -ge 0 -a $# -le 1 ] || {
+# 	# 	usage
+# 	# 	exit 1
+# 	# }
+# 	case "$1" in
+# 	"") cmd_mount ;;
+# 	"mount") cmd_mount ;;
+# 	"umount") cmd_umount ;;
+# 	"remount") cmd_remount ;;
+# 	"check") cmd_check ;;
+# 	"orphan") cmd_orphan ;;
+# 	"link")
+# 		shift
+# 		cmd_link "$@"
+# 		;;
+# 	*) usage ;;
+# 	esac
+# }
+
+# cmd_check() {
+# 	is_mounted
+# }
+
+# cmd_mount() {
+# 	if is_mounted; then
+# 		echo "Already mounted at $mount_point" >&2
+# 		return 1
+# 	fi
+
+# 	sectors=$(($size * 1024 * 1024 / 512))
+
+# 	# diskutil erasevolume HFS+ 'tmpfs' `hdiutil attach -nomount ram://$sectors`
+
+# 	# diskutil erasevolume HFS+ 'RAM_Logs' $(diskutil image attach --noMount ram://2097152)
+
+# 	dev=$(diskutil image attach --noMount ram://$sectors)
+# 	diskutil erasevolume HFS+ "$name" "$dev"
+
+# 	# 1. Move all three SQLite files to the RAM disk
+# 	# mv ~/.codex/logs_2.sqlite* /Volumes/tmpfs/
+
+# 	# # 2. Create the symlinks back to the original directory
+# 	# for file in logs_2.sqlite logs_2.sqlite-shm logs_2.sqlite-wal; do
+# 	# ln -s "/Volumes/tmpfs/$file" "$HOME/.codex/$file"
+# 	# done
+
+# 	# dev=$(diskutil image attach --noMount ram://$sectors)
+# 	# newfs_hfs -v "$name" "$dev"
+# 	# mount -t hfs -o nobrowse "$dev" "$mount_point"
+# 	# dev=$(hdiutil attach -nomount ram://$sectors) &&
+# 	# newfs_hfs -v "$name" "$dev" &&
+# 	# mount -t hfs -o nobrowse "$dev" "$mount_point" &&
+# 	# echo "Hello, world!" >"$mount_point"/hello_world &&
+# 	# echo "Mounted $name ($size MB) at $mount_point"
+# }
+
+# cmd_umount() {
+# 	dev=$(df "$mount_point" | tail -1 | awk '{ print $1 }')
+# 	[ $dev ] || return 1
+# 	umount "$mount_point" && hdiutil detach "$dev"
+# }
+
+# cmd_remount() {
+# 	if is_mounted; then cmd_umount else true; fi &&
+# 		cmd_mount
+# }
+
+# cmd_orphan() {
+# 	hdiutil info | egrep 'image-path\s+: ram://' -A14 | egrep '^/dev/disk\d+\s*$'
+# 	return 0
+# }
+
+# RAM_DISK="/Volumes/tmpfs"
+
+# cmd_link() {
+# 	# "$@" represents all arguments passed into this function
+# 	for filepath in "$@"; do
+
+# 		# 1. Protection: Skip if the file doesn't exist
+# 		if [ ! -e "$filepath" ]; then
+# 			echo "Warning: '$filepath' does not exist."
+# 			continue
+# 		fi
+
+# 		# 2. Protection: Skip if it is already a symlink (prevents recursive messes)
+# 		if [ -L "$filepath" ]; then
+# 			echo "Skipping: '$filepath' is already a symlink."
+# 			continue
+# 		fi
+
+# 		# 3. Extract just the filename from the full path
+# 		local filename=$(basename "$filepath")
+
+# 		# 4. Move the actual file to the RAM disk
+# 		# mv "$filepath" "$RAM_DISK/"
+
+# 		# 5. Create the symlink at the original path pointing to the new location
+# 		# -s for symlink, -f to force overwrite if a broken link exists
+# 		# ln -sf "$RAM_DISK/$filename" "$filepath"
+
+# 		echo "Redirected: $filepath -> $RAM_DISK/$filename"
+# 	done
+# }
+
+# is_mounted() {
+# 	mount | grep -q " on $mount_point "
+# }
+
+# process_argv "$@"
