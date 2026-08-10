@@ -1,0 +1,14 @@
+src/tmpfs/system.py
+  h_aceaeb4e74d6dc 261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "c68ac8c58177f6568f6af60d1e66375bb97ea0d6",
+  "prompts": {},
+  "humans": {
+    "h_aceaeb4e74d6dc": {
+      "author": "Claudio Spiess <claudiosv@users.noreply.github.com>"
+    }
+  }
+}
