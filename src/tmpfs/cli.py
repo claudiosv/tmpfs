@@ -792,6 +792,12 @@ def rename(
     old_name: str,
     new_name: str,
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force unmount even if files are open (may corrupt in-progress writes)",
+    ),
 ) -> None:
     """Rename a configured ramdisk, relocating its mount point and repairing links if live."""
     config = load_config()
@@ -827,7 +833,7 @@ def rename(
             with console.status(
                 f"relocating {old_mount_point} -> {new_mount_point}..."
             ):
-                system.unmount_only(old_mount_point)
+                system.unmount_only(old_mount_point, force=force)
                 system.mount_hfs(
                     device, new_mount_point, new_disk.options.to_mount_flags()
                 )
